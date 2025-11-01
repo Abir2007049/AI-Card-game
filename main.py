@@ -320,7 +320,8 @@ def play_game():
             first_player = "AI"  # AI won, plays first next round
         else:
             winner = "Draw"
-            # In case of tie, first player remains the same
+            # On tie, alternate who plays first next round to keep momentum
+            first_player = "AI" if first_player == "Human" else "Human"
 
         print_round_summary(round_num, human_card, ai_card, human_score, ai_score, winner, first_player if winner != "Draw" else "Tie")
 

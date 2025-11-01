@@ -1,0 +1,4 @@
+# Runtime deps for AI-Card-game
+# Use a Python version with prebuilt wheels for pygame (Windows): Python 3.11 or 3.12
+pygame~=2.6
+colorama>=0.4.6,<1
