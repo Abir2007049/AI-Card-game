@@ -155,6 +155,7 @@ class GameUI:
         self.ai_played_card = None
         self.message = "Welcome to AI Card Duel!"
         self.ai_thinking = False
+        self.played_values = set()
 
         # Animations and hover
         self.animations: List[dict] = []  # {card, tx, ty, speed, on_done}
@@ -208,6 +209,7 @@ class GameUI:
         self.selected_card = None
         self.human_played_card = None
         self.ai_played_card = None
+        self.played_values = set()
         
     def handle_events(self):
         """Handle pygame events"""
@@ -298,16 +300,20 @@ class GameUI:
         human_card_values = [card.value for card in self.human_cards]
         
         if self.first_player == "AI":
-            # AI plays first
+            # AI plays first: build opponent pool from unknowns (no peeking at human hand)
+            all_possible = set(range(1, 31))
+            opp_pool = sorted(list(all_possible - set(ai_card_values) - self.played_values))
             best_value = best_move_when_playing_first(
-                ai_card_values, human_card_values, 
-                self.ai_score, self.human_score
+                ai_card_values, opp_pool, 
+                self.ai_score, self.human_score,
+                depth=3, opp_hand_size=len(self.human_cards), samples=3
             )
         else:
             # AI responds to human
             best_value = best_move_when_playing_second(
                 ai_card_values, self.human_played_card.value,
-                self.ai_score, self.human_score
+                self.ai_score, self.human_score,
+                depth=3, opp_remaining_count=max(0, len(self.human_cards) - 1)
             )
         
         # Find and play the AI card
@@ -343,6 +349,10 @@ class GameUI:
             winner = "Tie"
             # Alternate first player on tie, to keep momentum
             self.first_player = "AI" if self.first_player == "Human" else "Human"
+        
+        # Record played cards for imperfect-information pool
+        self.played_values.add(human_value)
+        self.played_values.add(ai_value)
         
         self.message = f"Round {self.round_num}: {winner} wins! H:{human_value} vs AI:{ai_value}"
         self.round_num += 1

@@ -72,80 +72,99 @@ def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alph
         return best_val
 
 
-def best_move_when_playing_first(ai_cards, opp_cards, ai_score, opp_score, depth=3):
-    """AI plays first - uses expectiminimax to evaluate uncertain opponent responses."""
-    
+def best_move_when_playing_first(ai_cards, opp_pool, ai_score, opp_score, depth=3, opp_hand_size=None, samples=3):
+    """AI plays first with imperfect information.
+    - opp_pool: all numbers the opponent could possibly hold right now (unknown hand values)
+    - opp_hand_size: how many cards the opponent has (known count)
+    - samples: number of random opponent-hand samples to average over
+    """
+
     print(f"\n{Fore.CYAN}🤖 AI Decision Process (playing first):{Style.RESET_ALL}")
     print(f"   AI's cards: {Fore.MAGENTA}{ai_cards}{Style.RESET_ALL}")
-    print(f"   Opponent's possible cards: {Fore.YELLOW}{opp_cards}{Style.RESET_ALL}")
-    
+    print(f"   Opponent pool size: {Fore.YELLOW}{len(opp_pool)}{Style.RESET_ALL}")
+
+    if opp_hand_size is None:
+        opp_hand_size = min(10, len(opp_pool))
+
     best_card = None
     best_avg_eval = -math.inf
     card_analysis = []
-    
+
     for ai_card in ai_cards:
-        total_eval = 0
-        win_scenarios = 0
-        lose_scenarios = 0
-        
-        # Evaluate against ALL possible opponent responses
-        for opp_card in opp_cards:
-            # Calculate outcome of this matchup
-            new_ai_score = ai_score
-            new_opp_score = opp_score
-            
-            if ai_card > opp_card:
-                new_ai_score += ai_card + opp_card
-                immediate = ai_card + opp_card
-                win_scenarios += 1
-            else:
-                new_opp_score += ai_card + opp_card
-                immediate = -(ai_card + opp_card)
-                lose_scenarios += 1
-            
-            # Evaluate future game state
-            remaining_ai = [c for c in ai_cards if c != ai_card]
-            remaining_opp = [c for c in opp_cards if c != opp_card]
-            
-            if remaining_ai and remaining_opp:
-                future_eval = minimax(remaining_ai, remaining_opp, new_ai_score, new_opp_score,
-                                     min(depth, len(remaining_ai)), True)
-            else:
-                future_eval = new_ai_score - new_opp_score
-            
-            # Combine immediate and future evaluation
-            scenario_eval = immediate * 1.0 + future_eval * 1.5
-            total_eval += scenario_eval
-        
-        # Average evaluation across all opponent responses (Expectiminimax)
-        avg_eval = total_eval / len(opp_cards)
-        win_prob = (win_scenarios / len(opp_cards)) * 100
-        
+        sample_evals = []
+        total_wins = 0
+        total_cases = 0
+
+        for _ in range(max(1, samples)):
+            if len(opp_pool) < 1:
+                continue
+            # Sample a plausible opponent hand
+            hand_size = min(opp_hand_size, len(opp_pool))
+            sampled_hand = random.sample(opp_pool, hand_size)
+
+            hand_total = 0
+            wins_in_hand = 0
+            for opp_card in sampled_hand:
+                new_ai_score = ai_score
+                new_opp_score = opp_score
+
+                if ai_card > opp_card:
+                    new_ai_score += ai_card + opp_card
+                    immediate = ai_card + opp_card
+                    wins_in_hand += 1
+                else:
+                    new_opp_score += ai_card + opp_card
+                    immediate = -(ai_card + opp_card)
+
+                remaining_ai = [c for c in ai_cards if c != ai_card]
+                remaining_opp_pool = [c for c in sampled_hand if c != opp_card]
+
+                if remaining_ai and remaining_opp_pool:
+                    future_eval = minimax(remaining_ai, remaining_opp_pool, new_ai_score, new_opp_score,
+                                          min(depth, len(remaining_ai)), True)
+                else:
+                    future_eval = new_ai_score - new_opp_score
+
+                hand_total += immediate * 1.0 + future_eval * 1.5
+
+            if sampled_hand:
+                sample_evals.append(hand_total / len(sampled_hand))
+                total_wins += wins_in_hand
+                total_cases += len(sampled_hand)
+
+        if sample_evals:
+            avg_eval = sum(sample_evals) / len(sample_evals)
+            win_prob = (total_wins / total_cases) * 100 if total_cases else 0
+        else:
+            avg_eval = -math.inf
+            win_prob = 0
+
         card_analysis.append({
             'card': ai_card,
             'avg_eval': avg_eval,
             'win_prob': win_prob,
-            'win_count': win_scenarios,
-            'lose_count': lose_scenarios
+            'win_count': total_wins,
+            'lose_count': (total_cases - total_wins)
         })
-        
+
         if avg_eval > best_avg_eval:
             best_avg_eval = avg_eval
             best_card = ai_card
-    
+
     # Show top 3 options
+    card_analysis = [c for c in card_analysis if c['avg_eval'] != -math.inf]
     card_analysis.sort(key=lambda x: x['avg_eval'], reverse=True)
-    print(f"\n   📊 Top 3 card options:")
-    for i, analysis in enumerate(card_analysis[:3], 1):
-        print(f"   {i}. Card {Fore.CYAN}{analysis['card']}{Style.RESET_ALL}: "
-              f"Win={analysis['win_prob']:.0f}% ({analysis['win_count']}/{len(opp_cards)}), "
-              f"AvgEval={analysis['avg_eval']:.1f}")
-    
+    if card_analysis:
+        print(f"\n   📊 Top 3 card options:")
+        for i, analysis in enumerate(card_analysis[:3], 1):
+            print(f"   {i}. Card {Fore.CYAN}{analysis['card']}{Style.RESET_ALL}: "
+                  f"Win={analysis['win_prob']:.0f}%, AvgEval={analysis['avg_eval']:.1f}")
+
     print(f"\n   💡 BEST MOVE: {Fore.GREEN}{best_card}{Style.RESET_ALL} (Avg Eval: {best_avg_eval:.1f})\n")
     return best_card
 
 
-def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, depth=3):
+def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, depth=3, opp_remaining_count=None):
     """AI plays second - uses minimax to evaluate best response knowing opponent's card."""
     
     print(f"\n{Fore.CYAN}🤖 AI Decision Process:{Style.RESET_ALL}")
@@ -183,7 +202,13 @@ def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, dep
         # Estimate opponent's remaining cards (exclude known human_card and ai_cards)
         all_possible = set(range(1, 31))
         known_cards = set(ai_cards) | {human_card}
-        possible_opp_cards = sorted(list(all_possible - known_cards))[:len(remaining_ai_cards)]
+        possible_pool = sorted(list(all_possible - known_cards))
+        # Estimate the opponent's remaining hand size if provided, otherwise mirror AI remaining
+        target_count = opp_remaining_count if opp_remaining_count is not None else len(remaining_ai_cards)
+        if len(possible_pool) > target_count and target_count > 0:
+            possible_opp_cards = sorted(random.sample(possible_pool, target_count))
+        else:
+            possible_opp_cards = possible_pool
         
         # Use minimax to evaluate future game state
         if remaining_ai_cards and possible_opp_cards:
@@ -270,6 +295,8 @@ def play_game():
     print(f"{Fore.MAGENTA}(Note: 10 cards are hidden from both players!){Style.RESET_ALL}")
     print(f"{Fore.CYAN}Rule: Winner of each round plays first in the next round!{Style.RESET_ALL}\n")
 
+    played_cards = set()
+
     for round_num in range(1, 11):
         print(f"{Fore.CYAN}{'='*50}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}ROUND {round_num} - {first_player} plays first!{Style.RESET_ALL}")
@@ -294,8 +321,12 @@ def play_game():
             print(f"{Fore.MAGENTA}AI responds with: {ai_card}{Style.RESET_ALL}")
             
         else:  # AI plays first
-            # AI plays first without knowing human's card
-            ai_card = best_move_when_playing_first(ai_cards, human_cards, ai_score, human_score)
+            # AI plays first without knowing human's hand: build possible pool and sample
+            all_possible = set(range(1, 31))
+            opp_pool = sorted(list(all_possible - set(ai_cards) - played_cards))
+            ai_card = best_move_when_playing_first(
+                ai_cards, opp_pool, ai_score, human_score, depth=3, opp_hand_size=len(human_cards), samples=3
+            )
             print(f"{Fore.MAGENTA}AI plays: {ai_card}{Style.RESET_ALL}")
             
             # Human responds
@@ -324,6 +355,10 @@ def play_game():
             first_player = "AI" if first_player == "Human" else "Human"
 
         print_round_summary(round_num, human_card, ai_card, human_score, ai_score, winner, first_player if winner != "Draw" else "Tie")
+
+        # Track played cards for imperfect-information pool updates
+        played_cards.add(human_card)
+        played_cards.add(ai_card)
 
         human_cards.remove(human_card)
         ai_cards.remove(ai_card)
