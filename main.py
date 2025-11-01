@@ -8,15 +8,51 @@ init(autoreset=True)
 # ========================= AI Logic =========================
 
 def evaluate_state(ai_cards, opp_cards, ai_score, opp_score):
-    """Heuristic evaluation of game state."""
+    """Heuristic evaluation of game state optimized for trick-based scoring."""
     score_diff = ai_score - opp_score
     remaining_cards_value = sum(ai_cards) - sum(opp_cards)
     card_count_advantage = len(ai_cards) - len(opp_cards)
+
+    # High cards (>20) are crucial for winning tricks
+    ai_high = [c for c in ai_cards if c > 20]
+    opp_high = [c for c in opp_cards if c > 20]
+    high_card_advantage = len(ai_high) - len(opp_high)
     
-    # Consider high cards more valuable
-    high_card_bonus = sum(c for c in ai_cards if c > 20) * 0.2
+    # Top cards (>25) are extremely valuable
+    ai_top = sum(1 for c in ai_cards if c > 25)
+    opp_top = sum(1 for c in opp_cards if c > 25)
+    top_card_advantage = ai_top - opp_top
+
+    # Card count matters more in trick scoring (more cards = more chances to win)
+    cards_left_total = len(ai_cards) + len(opp_cards)
     
-    return score_diff + 0.15 * remaining_cards_value + 2 * card_count_advantage + high_card_bonus
+    # Endgame: score difference becomes critical
+    if cards_left_total <= 4:
+        score_weight = 8.0  # Very high weight in endgame
+    elif cards_left_total <= 6:
+        score_weight = 5.0
+    else:
+        score_weight = 3.0
+    
+    # Midgame: having more high cards is crucial
+    high_card_weight = 2.0 if cards_left_total > 4 else 1.2
+    
+    # Early game: card count and overall strength matter
+    card_count_weight = 1.5 if cards_left_total > 6 else 1.0
+    
+    # Flexibility: having a range of cards (not just high or low)
+    ai_spread = max(ai_cards) - min(ai_cards) if ai_cards else 0
+    opp_spread = max(opp_cards) - min(opp_cards) if opp_cards else 0
+    spread_advantage = (ai_spread - opp_spread) * 0.05
+
+    return (
+        score_weight * score_diff
+        + card_count_weight * card_count_advantage
+        + high_card_weight * high_card_advantage
+        + 2.5 * top_card_advantage
+        + 0.08 * remaining_cards_value
+        + spread_advantage
+    )
 
 
 def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alpha=-math.inf, beta=math.inf):
@@ -26,8 +62,9 @@ def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alph
 
     if is_maximizing:
         best_val = -math.inf
-        for ai_card in ai_cards:
-            for opp_card in opp_cards:
+        # Move ordering: try strong AI cards first; try opponent replies from low to high
+        for ai_card in sorted(ai_cards, reverse=True):
+            for opp_card in sorted(opp_cards):
                 new_ai = ai_cards.copy()
                 new_opp = opp_cards.copy()
                 new_ai.remove(ai_card)
@@ -35,9 +72,9 @@ def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alph
 
                 new_ai_score, new_opp_score = ai_score, opp_score
                 if ai_card > opp_card:
-                    new_ai_score += ai_card + opp_card
+                    new_ai_score += 1  # trick-based scoring
                 else:
-                    new_opp_score += ai_card + opp_card
+                    new_opp_score += 1
 
                 val = minimax(new_ai, new_opp, new_ai_score, new_opp_score, depth - 1, False, alpha, beta)
                 best_val = max(best_val, val)
@@ -49,8 +86,9 @@ def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alph
         return best_val
     else:
         best_val = math.inf
-        for opp_card in opp_cards:
-            for ai_card in ai_cards:
+        # Opponent choices ordered from low to high; AI replies from high to low
+        for opp_card in sorted(opp_cards):
+            for ai_card in sorted(ai_cards, reverse=True):
                 new_ai = ai_cards.copy()
                 new_opp = opp_cards.copy()
                 new_ai.remove(ai_card)
@@ -58,9 +96,9 @@ def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alph
 
                 new_ai_score, new_opp_score = ai_score, opp_score
                 if ai_card > opp_card:
-                    new_ai_score += ai_card + opp_card
+                    new_ai_score += 1  # trick-based scoring
                 else:
-                    new_opp_score += ai_card + opp_card
+                    new_opp_score += 1
 
                 val = minimax(new_ai, new_opp, new_ai_score, new_opp_score, depth - 1, True, alpha, beta)
                 best_val = min(best_val, val)
@@ -72,7 +110,7 @@ def minimax(ai_cards, opp_cards, ai_score, opp_score, depth, is_maximizing, alph
         return best_val
 
 
-def best_move_when_playing_first(ai_cards, opp_pool, ai_score, opp_score, depth=3, opp_hand_size=None, samples=3):
+def best_move_when_playing_first(ai_cards, opp_pool, ai_score, opp_score, depth=4, opp_hand_size=None, samples=5):
     """AI plays first with imperfect information.
     - opp_pool: all numbers the opponent could possibly hold right now (unknown hand values)
     - opp_hand_size: how many cards the opponent has (known count)
@@ -109,19 +147,20 @@ def best_move_when_playing_first(ai_cards, opp_pool, ai_score, opp_score, depth=
                 new_opp_score = opp_score
 
                 if ai_card > opp_card:
-                    new_ai_score += ai_card + opp_card
-                    immediate = ai_card + opp_card
+                    new_ai_score += 1
+                    immediate = 1
                     wins_in_hand += 1
                 else:
-                    new_opp_score += ai_card + opp_card
-                    immediate = -(ai_card + opp_card)
+                    new_opp_score += 1
+                    immediate = -1
 
                 remaining_ai = [c for c in ai_cards if c != ai_card]
                 remaining_opp_pool = [c for c in sampled_hand if c != opp_card]
 
                 if remaining_ai and remaining_opp_pool:
+                    local_depth = min(depth, len(remaining_ai))
                     future_eval = minimax(remaining_ai, remaining_opp_pool, new_ai_score, new_opp_score,
-                                          min(depth, len(remaining_ai)), True)
+                                          local_depth, True)
                 else:
                     future_eval = new_ai_score - new_opp_score
 
@@ -164,7 +203,7 @@ def best_move_when_playing_first(ai_cards, opp_pool, ai_score, opp_score, depth=
     return best_card
 
 
-def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, depth=3, opp_remaining_count=None):
+def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, depth=4, opp_remaining_count=None):
     """AI plays second - uses minimax to evaluate best response knowing opponent's card."""
     
     print(f"\n{Fore.CYAN}🤖 AI Decision Process:{Style.RESET_ALL}")
@@ -190,11 +229,11 @@ def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, dep
         new_opp_score = opp_score
         
         if card > human_card:
-            new_ai_score += card + human_card
-            immediate_value = card + human_card
+            new_ai_score += 1
+            immediate_value = 1
         else:
-            new_opp_score += card + human_card
-            immediate_value = -(card + human_card)
+            new_opp_score += 1
+            immediate_value = -1
         
         # Simulate remaining game with this move
         remaining_ai_cards = [c for c in ai_cards if c != card]
@@ -212,8 +251,9 @@ def best_move_when_playing_second(ai_cards, human_card, ai_score, opp_score, dep
         
         # Use minimax to evaluate future game state
         if remaining_ai_cards and possible_opp_cards:
+            local_depth = min(depth, len(remaining_ai_cards))
             future_eval = minimax(remaining_ai_cards, possible_opp_cards, new_ai_score, new_opp_score, 
-                                 min(depth, len(remaining_ai_cards)), True)
+                                 local_depth, True)
         else:
             future_eval = new_ai_score - new_opp_score
         
@@ -324,8 +364,12 @@ def play_game():
             # AI plays first without knowing human's hand: build possible pool and sample
             all_possible = set(range(1, 31))
             opp_pool = sorted(list(all_possible - set(ai_cards) - played_cards))
+            # Dynamic depth/samples by game stage
+            cards_left = len(ai_cards)
+            dyn_depth = 3 if cards_left > 7 else 4 if cards_left > 4 else 5
+            dyn_samples = 5 if cards_left > 6 else 7
             ai_card = best_move_when_playing_first(
-                ai_cards, opp_pool, ai_score, human_score, depth=3, opp_hand_size=len(human_cards), samples=3
+                ai_cards, opp_pool, ai_score, human_score, depth=dyn_depth, opp_hand_size=len(human_cards), samples=dyn_samples
             )
             print(f"{Fore.MAGENTA}AI plays: {ai_card}{Style.RESET_ALL}")
             
@@ -342,11 +386,11 @@ def play_game():
         # Determine winner
         winner = None
         if human_card > ai_card:
-            human_score += human_card + ai_card
+            human_score += 1
             winner = "Human"
             first_player = "Human"  # Human won, plays first next round
         elif ai_card > human_card:
-            ai_score += human_card + ai_card
+            ai_score += 1
             winner = "AI"
             first_player = "AI"  # AI won, plays first next round
         else:

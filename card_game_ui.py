@@ -12,6 +12,7 @@ from main import (
 
 # Initialize Pygame
 pygame.init()
+pygame.mixer.init()
 
 # Constants
 SCREEN_WIDTH = 1200
@@ -61,6 +62,19 @@ def draw_panel(surface: pygame.Surface, rect: pygame.Rect, color: Tuple[int, int
     pygame.draw.rect(surface, color, rect, border_radius=radius)
     if border:
         pygame.draw.rect(surface, border_color, rect, border, border_radius=radius)
+
+
+def make_sound(frequency: int, duration_ms: int = 80, volume: float = 0.3):
+    """Generate a simple beep sound at given frequency."""
+    sample_rate = 22050
+    n_samples = int(sample_rate * duration_ms / 1000)
+    # Generate sine wave
+    buf = []
+    for i in range(n_samples):
+        value = int(32767 * volume * math.sin(2 * math.pi * frequency * i / sample_rate))
+        buf.append([value, value])
+    sound = pygame.sndarray.make_sound(buf)
+    return sound
 
 
 class Button:
@@ -173,6 +187,15 @@ class GameUI:
         self.ai_hand_y = 50
         self.play_area_y = SCREEN_HEIGHT // 2 - 60
         
+        # Sound effects
+        try:
+            self.snd_card_play = make_sound(600, 100, 0.25)
+            self.snd_win = make_sound(800, 150, 0.3)
+            self.snd_lose = make_sound(400, 150, 0.3)
+            self.sound_enabled = True
+        except:
+            self.sound_enabled = False
+        
     def setup_game(self):
         """Initialize a new game"""
         cards = list(range(1, 31))
@@ -185,15 +208,11 @@ class GameUI:
         
         self.human_cards = []
         for i, value in enumerate(human_card_values):
-            x = 50 + i * (CARD_WIDTH + CARD_MARGIN)
-            y = self.human_hand_y
-            self.human_cards.append(Card(value, x, y))
+            self.human_cards.append(Card(value, 0, self.human_hand_y))
             
         self.ai_cards = []
         for i, value in enumerate(ai_card_values):
-            x = 50 + i * (CARD_WIDTH + CARD_MARGIN)
-            y = self.ai_hand_y
-            self.ai_cards.append(Card(value, x, y))
+            self.ai_cards.append(Card(value, 0, self.ai_hand_y))
             
         self.unseen_cards = [Card(value) for value in unseen_card_values]
         
@@ -210,6 +229,9 @@ class GameUI:
         self.human_played_card = None
         self.ai_played_card = None
         self.played_values = set()
+        # Apply centered layout
+        self.layout_hand(self.human_cards, self.human_hand_y)
+        self.layout_hand(self.ai_cards, self.ai_hand_y)
         
     def handle_events(self):
         """Handle pygame events"""
@@ -272,6 +294,9 @@ class GameUI:
     
     def play_human_card(self, card):
         """Human plays a card"""
+        if self.sound_enabled:
+            self.snd_card_play.play()
+        
         if self.first_player == "Human":
             # Human plays first
             self.human_played_card = card
@@ -325,6 +350,8 @@ class GameUI:
         self.layout_hand(self.ai_cards, self.ai_hand_y)
         
         ax, ay = self.get_play_positions()[1]
+        if self.sound_enabled:
+            self.snd_card_play.play()
         self.animate_card_to(self.ai_played_card, ax, ay, on_done=lambda: self._mark_ready("ai"))
 
         if self.first_player == "AI":
@@ -338,13 +365,17 @@ class GameUI:
         ai_value = self.ai_played_card.value
         
         if human_value > ai_value:
-            self.human_score += human_value + ai_value
+            self.human_score += 1
             winner = "Human"
             self.first_player = "Human"
+            if self.sound_enabled:
+                self.snd_win.play()
         elif ai_value > human_value:
-            self.ai_score += human_value + ai_value
+            self.ai_score += 1
             winner = "AI"
             self.first_player = "AI"
+            if self.sound_enabled:
+                self.snd_lose.play()
         else:
             winner = "Tie"
             # Alternate first player on tie, to keep momentum
@@ -380,9 +411,14 @@ class GameUI:
             self.ai_thinking = (self.first_player == "AI")
 
     def layout_hand(self, cards: List['Card'], y: int):
-        """Reflow a hand horizontally with consistent spacing."""
+        """Reflow a hand horizontally, centered based on remaining count."""
+        n = len(cards)
+        if n == 0:
+            return
+        total_width = n * CARD_WIDTH + (n - 1) * CARD_MARGIN
+        start_x = max(30, (SCREEN_WIDTH - total_width) // 2)
         for i, card in enumerate(cards):
-            target_x = 50 + i * (CARD_WIDTH + CARD_MARGIN)
+            target_x = start_x + i * (CARD_WIDTH + CARD_MARGIN)
             card.update_position(target_x, y)
     
     def draw_cards(self):
@@ -458,8 +494,6 @@ class GameUI:
             inst_text = font_medium.render("Press R to restart", True, GOLD)
             inst_rect = inst_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 100))
             self.screen.blit(inst_text, inst_rect)
-            self.btn_restart.hovered = self.btn_restart.contains_point(pygame.mouse.get_pos())
-            self.btn_restart.draw(self.screen)
         
         # AI thinking indicator
         if self.ai_thinking:
